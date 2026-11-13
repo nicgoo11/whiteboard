@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Whiteboard</title>
+<meta name="description" content="Shared online whiteboard – no login, everyone with the link can edit.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='3' fill='%23ffd43b'/%3E%3Cpath d='M9 12h14M9 17h14M9 22h9' stroke='%23333' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage" data-tool="select">
+  <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+    <g id="world"><g id="objs"></g><g id="overlay"></g></g>
+  </svg>
+  <div id="cursors"></div>
+</div>
+
+<div class="panel" id="titlebar">
+  <span class="logo" aria-hidden="true"></span>
+  <input id="title" placeholder="Untitled board" maxlength="80" spellcheck="false" aria-label="Board title">
+  <button class="pbtn" id="share" title="Copy link to this board">Share</button>
+  <button class="pbtn ghost" id="newboard" title="Start a new empty board">New</button>
+  <span id="status" title="Sync status"></span>
+</div>
+
+<div class="panel" id="users"></div>
+<div class="panel" id="tools"></div>
+<div class="panel" id="ctx" hidden></div>
+
+<div class="panel" id="zoom">
+  <button class="pbtn ghost" id="zout" title="Zoom out (-)">−</button>
+  <button class="pbtn ghost" id="zpct" title="Reset to 100%">100%</button>
+  <button class="pbtn ghost" id="zin" title="Zoom in (+)">+</button>
+  <button class="pbtn ghost" id="fit" title="Fit all (Shift+1)">Fit</button>
+</div>
+
+<div id="hint">Double-click to add a sticky note · <b>N</b> note · <b>T</b> text · <b>R</b> rect · <b>L</b> line · <b>A</b> arrow · <b>P</b> pen</div>
+<div id="toast" role="status"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
