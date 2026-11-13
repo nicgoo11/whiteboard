@@ -149,3 +149,7 @@ foreignObject { overflow: visible; }
   #hint { display: none; }
   #users { top: calc(max(12px, env(safe-area-inset-top)) + 52px); }
 }
+
+/* ---------- pictures ---------- */
+.img-bg { fill: #ececec; }
+#objs image { -webkit-user-drag: none; user-select: none; }

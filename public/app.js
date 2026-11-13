@@ -20,7 +20,7 @@
   const USER_COLORS = ["#e03131", "#f08c00", "#2f9e44", "#1971c2", "#9c36b5", "#0c8599", "#d6336c", "#5f3dc4"];
   const ANIMALS = ["Otter", "Fox", "Panda", "Koala", "Lynx", "Heron", "Badger", "Gecko", "Moose", "Yak", "Puffin", "Walrus", "Ibex", "Marmot", "Owl", "Seal"];
   const TEXTABLE = new Set(["note", "shape", "text"]);
-  const CONNECTABLE = TEXTABLE;
+  const CONNECTABLE = new Set(["note", "shape", "text", "image"]);
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const safeColor = (c) => (/^#[0-9a-f]{3,8}$/i.test(c) ? c : "#888888");
 
@@ -209,7 +209,13 @@
       placeByZ(g, o.z);
     }
     if (o.id === editingId) return; // keep the live editor intact
+    if (o.type === "image" && g.__src === o.src && g.children.length === 2) {
+      // just move/resize – don't reload the picture
+      for (const c of g.children) for (const [k, v] of [["x", o.x], ["y", o.y], ["width", o.w], ["height", o.h]]) c.setAttribute(k, v);
+      return;
+    }
     g.textContent = "";
+    g.__src = null;
     g.setAttribute("class", "obj " + o.type);
     switch (o.type) {
       case "note":
@@ -241,6 +247,18 @@
           "stroke-dasharray": o.dash ? `${w * 3} ${w * 2.5}` : null,
         }, g);
         if (o.arrow) svgEl("path", { d: arrowHead(a, b, w), fill: color }, g);
+        break;
+      }
+      case "image": {
+        svgEl("rect", { x: o.x, y: o.y, width: o.w, height: o.h, class: "img-bg" }, g);
+        const im = svgEl("image", { x: o.x, y: o.y, width: o.w, height: o.h, preserveAspectRatio: "none" }, g);
+        let tries = 0;
+        im.addEventListener("error", () => {
+          // the picture may still be uploading on the other side → retry a few times
+          if (++tries <= 6) setTimeout(() => im.setAttribute("href", imageSrc(o.src) + (imageSrc(o.src).startsWith("data:") ? "" : "&r=" + tries)), 1500 * tries);
+        });
+        im.setAttribute("href", imageSrc(o.src));
+        g.__src = o.src;
         break;
       }
       case "pen": {
@@ -359,6 +377,7 @@
     front: '<path d="M12 17V4M7 9l5-5 5 5M5 20h14"/>',
     back: '<path d="M12 4v13M7 12l5 5 5-5M5 20h14"/>',
     dash: '<path d="M3 12h4M10 12h4M17 12h4"/>',
+    image: '<path d="M20.5 11.5l-8.3 8.3a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/>',
   };
   const icon = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 
@@ -816,7 +835,7 @@
         const left = h.includes("w"), top = h.includes("n");
         const ax = left ? o0.x + o0.w : o0.x, ay = top ? o0.y + o0.h : o0.y; // fixed corner
         let w = Math.abs(wx - ax), hh = Math.abs(wy - ay);
-        const keepRatio = o0.type === "note" || o0.type === "text" || e.shiftKey;
+        const keepRatio = o0.type === "note" || o0.type === "text" || o0.type === "image" || e.shiftKey;
         if (keepRatio) {
           const k = Math.max(w / o0.w, hh / o0.h, 20 / Math.min(o0.w, o0.h));
           w = o0.w * k;
@@ -986,6 +1005,7 @@
     if (k === "+" || k === "=") return zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
     if (k === "-") return zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
     if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) return fit();
+    if (k === "i") return fileInput.click();
     const map = { v: "select", h: "hand", n: "note", s: "note", t: "text", r: "rect", o: "ellipse", l: "line", a: "arrow", p: "pen", e: "eraser" };
     if (map[k]) setTool(map[k]);
   });
@@ -1016,6 +1036,12 @@
   });
   document.addEventListener("paste", (e) => {
     if (editingId || typing(e.target)) return;
+    const files = [...(e.clipboardData.files || [])].filter((f) => f.type.startsWith("image/"));
+    if (files.length) {
+      e.preventDefault();
+      insertImages(files, cursor);
+      return;
+    }
     const t = e.clipboardData.getData("text/plain");
     if (!t) return;
     e.preventDefault();
@@ -1033,6 +1059,106 @@
       createNote(cx, cy, t.slice(0, 5000));
     }
   });
+
+  // ================================================================ pictures (paperclip button, paste, drag & drop)
+  const imgCache = new Map(); // picture id → data URL I have locally
+  function imageSrc(id) {
+    let s = imgCache.get(id);
+    if (!s) { s = store.get("wb.img." + id, null); if (s) imgCache.set(id, s); }
+    return s || "/api/image?id=" + encodeURIComponent(id);
+  }
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "image/*";
+  fileInput.multiple = true;
+  fileInput.hidden = true;
+  document.body.appendChild(fileInput);
+  fileInput.addEventListener("change", () => { insertImages(fileInput.files, null); fileInput.value = ""; });
+  stage.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+  stage.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) insertImages(e.dataTransfer.files, toWorld(e.clientX, e.clientY));
+  });
+
+  // shrink to ≤1600 px and ≤1 MB before upload
+  async function prepareImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, bad) => {
+        const i = new Image();
+        i.onload = () => ok(i);
+        i.onerror = () => bad(new Error("not a readable picture"));
+        i.src = url;
+      });
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) throw new Error("empty picture");
+      let max = 1600;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const k = Math.min(1, max / Math.max(w, h));
+        const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+        const c = document.createElement("canvas");
+        c.width = cw;
+        c.height = ch;
+        const g = c.getContext("2d");
+        g.drawImage(img, 0, 0, cw, ch);
+        let data = c.toDataURL("image/webp", 0.85);
+        if (!data.startsWith("data:image/webp")) {
+          // no WebP encoder (Safari): PNG if small, otherwise JPEG on white
+          data = c.toDataURL("image/png");
+          if (data.length > 700000) {
+            g.globalCompositeOperation = "destination-over";
+            g.fillStyle = "#fff";
+            g.fillRect(0, 0, cw, ch);
+            data = c.toDataURL("image/jpeg", 0.85);
+          }
+        }
+        if (data.length <= 1000000) return { data, w: cw, h: ch };
+        max = Math.round(max * 0.7);
+      }
+      throw new Error("picture too large");
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  async function uploadImage(id, data) {
+    let res;
+    try {
+      res = await fetch("/api/image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, data }) });
+    } catch {
+      throw new Error("no connection");
+    }
+    if (res.status === 503 || res.status === 404) return "local";
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "upload failed (" + res.status + ")");
+    return "server";
+  }
+  async function insertImages(fileList, at) {
+    const files = [...(fileList || [])].filter((f) => f.type.startsWith("image/")).slice(0, 10);
+    if (!files.length) { toast("That's not a picture"); return; }
+    let [cx, cy] = at || toWorld(innerWidth / 2, innerHeight / 2);
+    toast(files.length > 1 ? `Adding ${files.length} pictures…` : "Adding picture…");
+    const added = [];
+    for (const f of files) {
+      try {
+        const { data, w, h } = await prepareImage(f);
+        const imgId = uid();
+        imgCache.set(imgId, data);
+        if ((await uploadImage(imgId, data)) === "local") store.set("wb.img." + imgId, data);
+        const k = Math.min(1, 480 / view.s / Math.max(w, h));
+        const ow = r1(w * k), oh = r1(h * k);
+        finishEdit();
+        begin();
+        const o = { id: uid(), type: "image", src: imgId, x: r1(cx - ow / 2), y: r1(cy - oh / 2), w: ow, h: oh, z: topZ() + 1 };
+        putObj(o);
+        commit();
+        added.push(o.id);
+        cx += 30 / view.s;
+        cy += 30 / view.s;
+      } catch (err) {
+        toast("Couldn't add picture: " + err.message);
+      }
+    }
+    if (added.length) { selection = new Set(added); drawSelection(); }
+  }
 
   // ================================================================ title, users, cursors, toolbar
   let titleT = null;
@@ -1107,7 +1233,8 @@
   const TOOLS = [
     ["select", "Select (V)"], ["hand", "Hand / pan (H, or hold Space)"], null,
     ["note", "Sticky note (N)"], ["text", "Text (T)"], ["rect", "Rectangle (R)"], ["ellipse", "Ellipse (O)"],
-    ["line", "Line / connector (L)"], ["arrow", "Arrow (A)"], ["pen", "Pen (P)"], ["eraser", "Eraser – pen & lines (E)"], null,
+    ["line", "Line / connector (L)"], ["arrow", "Arrow (A)"], ["pen", "Pen (P)"], ["eraser", "Eraser – pen & lines (E)"],
+    ["image", "Insert picture (I) – or paste / drop it"], null,
     ["undo", "Undo (Ctrl+Z)"], ["redo", "Redo (Ctrl+Y)"],
   ];
   const toolsEl = $("#tools");
@@ -1119,7 +1246,7 @@
     b.title = t[1];
     b.setAttribute("aria-label", t[1]);
     b.innerHTML = icon(t[0]);
-    b.onclick = () => (t[0] === "undo" ? undo() : t[0] === "redo" ? redo() : setTool(t[0]));
+    b.onclick = () => (t[0] === "undo" ? undo() : t[0] === "redo" ? redo() : t[0] === "image" ? fileInput.click() : setTool(t[0]));
     toolsEl.appendChild(b);
   }
   function setTool(t) {
